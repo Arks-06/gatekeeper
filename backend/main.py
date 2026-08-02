@@ -3,6 +3,7 @@ FastAPI application entry point.
 Configures baseline server instance, JSON logging, and Prometheus telemetry.
 """
 import logging
+
 from fastapi import FastAPI
 from prometheus_fastapi_instrumentator import Instrumentator
 from pythonjsonlogger import jsonlogger
