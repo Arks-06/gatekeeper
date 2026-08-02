@@ -19,18 +19,28 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-          cache-dependency-glob: "uv.lock"
+          cache-dependency-glob: "**/uv.lock"
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
-        run: uv sync --all-extras --dev
+      - name: Sync Backend Dependencies
+        working-directory: ./backend
+        run: uv sync
 
-      - name: Run Ruff Linting
-        run: uv run ruff check .
+      - name: Sync Frontend Dependencies
+        working-directory: ./frontend
+        run: uv sync
+
+      - name: Run Ruff Linting (Backend)
+        working-directory: ./backend
+        run: uvx ruff check .
+
+      - name: Run Ruff Linting (Frontend)
+        working-directory: ./frontend
+        run: uvx ruff check .
 
       - name: Verify Docker Compose Build
         run: docker compose build
