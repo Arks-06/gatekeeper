@@ -1,0 +1,14 @@
+.env
+.env.*
+grafana_admin_password.txt
+data/
+prometheus_data/
+grafana_data/
+logs/
+**/data/
+**/chunks/
+**/rules/
+*.log
+*.db
+*.sqlite
+*.sqlite3
