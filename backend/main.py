@@ -4,8 +4,8 @@ Configures baseline server instance, JSON logging, and Prometheus telemetry.
 """
 import logging
 from fastapi import FastAPI
-from pythonjsonlogger import jsonlogger
 from prometheus_fastapi_instrumentator import Instrumentator
+from pythonjsonlogger import jsonlogger
 
 logger = logging.getLogger()
 logHandler = logging.StreamHandler()
