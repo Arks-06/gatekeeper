@@ -3,6 +3,7 @@ Minimal Streamlit dashboard entry point.
 Renders UI foundation and provides a visual health ping status.
 """
 import os
+
 import requests
 import streamlit as st
 
