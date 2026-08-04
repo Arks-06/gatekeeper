@@ -3,12 +3,11 @@ FastAPI application entry point.
 Configures baseline server instance, JSON logging, and Prometheus telemetry.
 """
 import logging
-from typing import List
 
+# from typing import List
 from fastapi import FastAPI
 from prometheus_fastapi_instrumentator import Instrumentator
 from pythonjsonlogger import jsonlogger
-
 from schemas import JiraWebhookPayload
 
 logger = logging.getLogger()
@@ -24,7 +23,7 @@ Instrumentator().instrument(app).expose(app)
 
 # Temporary in-memory state.
 # to be replaced with asyncpg database list operations.
-alert_queue: List[JiraWebhookPayload] = []
+alert_queue: list[JiraWebhookPayload] = []
 
 @app.get("/health")
 async def health_check():
@@ -38,7 +37,7 @@ async def ingest_jira_webhook(payload: JiraWebhookPayload):
     alert_queue.append(payload)
     return {"status": "success", "message": "Payload validated and queued"}
 
-@app.get("/api/v1/webhooks/jira", response_model=List[JiraWebhookPayload])
+@app.get("/api/v1/webhooks/jira", response_model=list[JiraWebhookPayload])
 async def get_queued_alerts():
     # to be replaced with asyncpg select query.
     return alert_queue
