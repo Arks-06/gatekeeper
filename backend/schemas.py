@@ -2,8 +2,9 @@
 Pydantic models for request validation.
 Enforces strict typing for incoming webhook payloads.
 """
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from pydantic import BaseModel, Field
+
 
 class JiraWebhookPayload(BaseModel):
     ticket_id: str = Field(..., description="Unique identifier for the Jira ticket.")
