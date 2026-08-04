@@ -4,10 +4,10 @@ Configures baseline server instance, JSON logging, and Prometheus telemetry.
 """
 import logging
 
-# from typing import List
 from fastapi import FastAPI
 from prometheus_fastapi_instrumentator import Instrumentator
 from pythonjsonlogger import jsonlogger
+
 from schemas import JiraWebhookPayload
 
 logger = logging.getLogger()
