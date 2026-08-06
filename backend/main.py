@@ -2,7 +2,6 @@
 FastAPI application entry point.
 Configures baseline server instance, JSON logging, and Prometheus telemetry.
 """
-
 import logging
 from contextlib import asynccontextmanager
 from typing import Annotated
@@ -18,28 +17,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger()
 logHandler = logging.StreamHandler()
-formatter = jsonlogger.JsonFormatter("%(asctime)s %(levelname)s %(name)s %(message)s")
+formatter = jsonlogger.JsonFormatter('%(asctime)s %(levelname)s %(name)s %(message)s')
 logHandler.setFormatter(formatter)
 logger.addHandler(logHandler)
 logger.setLevel(logging.INFO)
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
     yield
 
-
 app = FastAPI(title="Gatekeeper Backend", lifespan=lifespan)
 
 Instrumentator().instrument(app).expose(app)
-
 
 @app.get("/health")
 async def health_check():
     logger.info("Health check endpoint accessed")
     return {"status": "ok"}
-
 
 @app.post("/api/v1/webhooks/jira", response_model=dict, status_code=201)
 async def ingest_jira_webhook(
