@@ -2,42 +2,57 @@
 FastAPI application entry point.
 Configures baseline server instance, JSON logging, and Prometheus telemetry.
 """
-import logging
 
-from fastapi import FastAPI
+import logging
+from contextlib import asynccontextmanager
+from typing import Annotated
+
+from crud import create_ticket, get_all_tickets
+from database import get_session, init_db
+from fastapi import Depends, FastAPI
+from models import Ticket
 from prometheus_fastapi_instrumentator import Instrumentator
 from pythonjsonlogger import jsonlogger
-
 from schemas import JiraWebhookPayload
+from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger()
 logHandler = logging.StreamHandler()
-formatter = jsonlogger.JsonFormatter('%(asctime)s %(levelname)s %(name)s %(message)s')
+formatter = jsonlogger.JsonFormatter("%(asctime)s %(levelname)s %(name)s %(message)s")
 logHandler.setFormatter(formatter)
 logger.addHandler(logHandler)
 logger.setLevel(logging.INFO)
 
-app = FastAPI(title="Gatekeeper Backend")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await init_db()
+    yield
+
+
+app = FastAPI(title="Gatekeeper Backend", lifespan=lifespan)
 
 Instrumentator().instrument(app).expose(app)
 
-# Temporary in-memory state.
-# to be replaced with asyncpg database list operations.
-alert_queue: list[JiraWebhookPayload] = []
 
 @app.get("/health")
 async def health_check():
     logger.info("Health check endpoint accessed")
     return {"status": "ok"}
 
+
 @app.post("/api/v1/webhooks/jira", response_model=dict, status_code=201)
-async def ingest_jira_webhook(payload: JiraWebhookPayload):
+async def ingest_jira_webhook(
+    payload: JiraWebhookPayload, 
+    session: Annotated[AsyncSession, Depends(get_session)]
+):
     logger.info(f"Received webhook for ticket: {payload.ticket_id}")
-    # append to be replaced with asyncpg insert query.
-    alert_queue.append(payload)
+    await create_ticket(session, payload)
     return {"status": "success", "message": "Payload validated and queued"}
 
-@app.get("/api/v1/webhooks/jira", response_model=list[JiraWebhookPayload])
-async def get_queued_alerts():
-    # to be replaced with asyncpg select query.
-    return alert_queue
+@app.get("/api/v1/webhooks/jira", response_model=list[Ticket])
+async def get_queued_alerts(
+    session: Annotated[AsyncSession, Depends(get_session)]
+):
+    tickets = await get_all_tickets(session)
+    return tickets
