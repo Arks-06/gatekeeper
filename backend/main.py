@@ -6,14 +6,15 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from crud import create_ticket, get_all_tickets
-from database import get_session, init_db
 from fastapi import Depends, FastAPI
-from models import Ticket
 from prometheus_fastapi_instrumentator import Instrumentator
 from pythonjsonlogger import jsonlogger
-from schemas import JiraWebhookPayload
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from crud import create_ticket, get_all_tickets
+from database import get_session, init_db
+from models import Ticket
+from schemas import JiraWebhookPayload
 
 logger = logging.getLogger()
 logHandler = logging.StreamHandler()
