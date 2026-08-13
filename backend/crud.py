@@ -1,13 +1,14 @@
 """
-"Asynchronous database operation abstractions."
 "Handles creation and retrieval of entity records."
 """
+# isort: off
 import uuid6
-from models import Ticket
-from schemas import JiraWebhookPayload
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from models import Ticket
+from schemas import JiraWebhookPayload
+# isort: on
 
 async def create_ticket(session: AsyncSession, payload: JiraWebhookPayload) -> Ticket:
     thread_uuid = str(uuid6.uuid7())

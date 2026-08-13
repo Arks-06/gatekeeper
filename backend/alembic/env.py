@@ -7,8 +7,11 @@ import os
 import sys
 from logging.config import fileConfig
 
-from alembic import context
+# isort: off
 from sqlalchemy.ext.asyncio import create_async_engine
+
+from alembic import context
+# isort: on
 
 # Inject the backend root directory into the Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
