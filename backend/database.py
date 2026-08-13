@@ -1,8 +1,7 @@
 """
-Database engine configuration and session management.
-Provides asynchronous connection pooling via asyncpg.
+"Database engine configuration and session management."
+"Provides asynchronous connection pooling via asyncpg."
 """
-
 import os
 from collections.abc import AsyncGenerator
 
@@ -25,11 +24,9 @@ engine = create_async_engine(
 
 async_session_maker = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-
 async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
-
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     async with async_session_maker() as session:

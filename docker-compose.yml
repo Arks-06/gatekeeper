@@ -28,14 +28,21 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    environment:
-      - DATABASE_URL=postgresql+asyncpg://admin:securepassword@postgres:5432/gatekeeper_db
-    # logging:
-    #   driver: loki
-    #   options:
-    #     loki-url: "http://localhost:3100/loki/api/v1/push"
-    #     loki-retries: "2"
-    #     loki-batch-size: "400"
+    env_file:
+      - ./backend/.env
+    volumes:
+      - ./backend:/app
+      - /app/.venv
+      - ./graph:/app/graph
+
+  mcpserver:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: always
+    ports:
+      - "9000:9000"
+    command: ["uv", "run", "python", "mcp_server.py"]
 
   frontend:
     build:
@@ -46,8 +53,10 @@ services:
       - "3000:8501"
     depends_on:
       - backend
+      - mcpserver
     environment:
       - BACKEND_URL=http://backend:8000
+      - MCP_URL=http://mcpserver:9000/sse
 
   prometheus:
     image: prom/prometheus:latest

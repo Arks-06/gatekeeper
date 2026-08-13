@@ -1,6 +1,6 @@
 """
-SQLModel database schema definitions.
-Maps Python objects to PostgreSQL tables.
+"SQLModel database schema definitions."
+"Maps Python objects to PostgreSQL tables."
 """
 
 from datetime import UTC, datetime
@@ -15,6 +15,9 @@ class Ticket(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     ticket_id: str = Field(
         unique=True, index=True, description="Jira ticket identifier"
+    )
+    thread_id: str = Field(
+        unique=True, index=True, description="LangGraph checkpoint thread UUID"
     )
     user_email: str = Field(index=True)
     alert_type: str = Field(index=True)

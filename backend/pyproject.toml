@@ -5,11 +5,20 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "alembic>=1.19.1",
     "asyncpg>=0.31.0",
     "fastapi>=0.141.1",
+    "fastmcp>=3.4.6",
+    "instructor>=1.15.4",
+    "langgraph>=1.2.10",
+    "langgraph-checkpoint-postgres>=3.1.2",
+    "openai>=2.54.0",
     "prometheus-fastapi-instrumentator>=8.1.0",
+    "psycopg-binary>=3.3.4",
+    "psycopg-pool>=3.3.1",
     "python-json-logger>=4.1.0",
     "sqlalchemy>=2.0.51",
     "sqlmodel>=0.0.39",
+    "uuid6>=2025.0.1",
     "uvicorn>=0.52.1",
 ]
