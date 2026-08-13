@@ -8,21 +8,23 @@ import sys
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from crud import create_ticket, get_all_tickets
-from database import DATABASE_URL, get_session, init_db
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 from fastapi.responses import PlainTextResponse
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from models import Ticket
 from prometheus_fastapi_instrumentator import Instrumentator
 from pythonjsonlogger import jsonlogger
-from schemas import JiraWebhookPayload
 from sqlalchemy.ext.asyncio import AsyncSession
-from tasks import resume_workflow
 
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# isort: off
+from crud import create_ticket, get_all_tickets
+from database import DATABASE_URL, get_session, init_db
 from graph.workflow import build_graph
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from models import Ticket
+from schemas import JiraWebhookPayload
+from tasks import resume_workflow
+# isort: on
 
 logger = logging.getLogger()
 logHandler = logging.StreamHandler()
