@@ -4,6 +4,7 @@
 """
 import json
 import os
+import sys
 
 import instructor
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -13,9 +14,14 @@ from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
 from openai import AsyncOpenAI
 
+from .fallback import execute_fallback
 from .guardrails import WHITELIST_REGISTRY, validate_action
+from .jira_sync import sync_jira_ticket
 from .llm_schemas import RemediationPlan
 from .state import GatekeeperState
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from metrics import TICKETS_AUTO_RESOLVED_TOTAL
 
 MCP_URL = os.getenv("MCP_INTERNAL_URL", "http://mcpserver:9000/sse")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
@@ -50,12 +56,16 @@ async def investigate_alert(state: GatekeeperState) -> GatekeeperState:
                     
     except Exception as error:  # noqa: BLE001
         evidence["error"] = str(error)
+        state["error_message"] = f"Investigation Error: {error!s}"
     
     state["investigative_evidence"] = evidence
     return state
 
 
 async def synthesize_and_propose(state: GatekeeperState) -> GatekeeperState:
+    if state.get("error_message"):
+        return state
+
     client = instructor.from_openai(
         AsyncOpenAI(
             base_url="https://api.groq.com/openai/v1",
@@ -72,30 +82,35 @@ async def synthesize_and_propose(state: GatekeeperState) -> GatekeeperState:
         f"Allowed Actions: {allowed_actions}"
     )
     
-    response = await client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        response_model=RemediationPlan,
-        messages=[
-            {
-                "role": "system", 
-                "content": (
-                    "Analyze security alerts and output structured remediation plans. "
-                    "The proposed_action field MUST exactly match one of the provided Allowed Actions. "
-                    "Do not use conversational language for the proposed_action."
-                )
-            },
-            {"role": "user", "content": prompt}
-        ],
-    )
-
-    state["summary"] = response.summary
-    state["risk_score"] = response.risk_score
-    state["proposed_action"] = response.proposed_action
+    try:
+        response = await client.chat.completions.create(
+            model="openai/gpt-oss-120b",
+            response_model=RemediationPlan,
+            messages=[
+                {
+                    "role": "system", 
+                    "content": (
+                        "Analyze security alerts and output structured remediation plans. "
+                        "The proposed_action field MUST exactly match one of the provided Allowed Actions. "
+                        "Do not use conversational language for the proposed_action."
+                    )
+                },
+                {"role": "user", "content": prompt}
+            ],
+        )
+        state["summary"] = response.summary
+        state["risk_score"] = response.risk_score
+        state["proposed_action"] = response.proposed_action
+    except Exception as error:  # noqa: BLE001
+        state["error_message"] = f"Synthesis Error: {error!s}"
     
     return state
 
 
 def await_human_approval(state: GatekeeperState) -> GatekeeperState:
+    if state.get("error_message"):
+        return state
+
     human_decision = interrupt("Human approval required before remediation execution.")
     
     if isinstance(human_decision, dict) and human_decision.get("action") == "approve":
@@ -127,14 +142,30 @@ async def execute_remediation(state: GatekeeperState) -> GatekeeperState:
                     
     except Exception as error:  # noqa: BLE001
         execution_log.append(f"FAILURE: {error!s}")
+        state["error_message"] = f"Execution Error: {error!s}"
 
     state["execution_log"] = execution_log
     return state
 
 
 def check_approval(state: GatekeeperState) -> str:
+    if state.get("error_message"):
+        return "fallback"
     if state.get("human_approved"):
         return "execute"
+    return "end"
+
+
+def route_post_remediation(state: GatekeeperState) -> str:
+    if state.get("error_message"):
+        return "fallback"
+    return "jira_sync"
+
+
+def route_post_jira(state: GatekeeperState) -> str:
+    if state.get("error_message") or "Failed" in str(state.get("jira_sync_status", "")):
+        return "fallback"
+    TICKETS_AUTO_RESOLVED_TOTAL.inc()
     return "end"
 
 
@@ -145,17 +176,33 @@ def build_graph(checkpointer: BaseCheckpointSaver | None = None):
     workflow.add_node("synthesize", synthesize_and_propose)
     workflow.add_node("human_approval", await_human_approval)
     workflow.add_node("remediate", execute_remediation)
+    workflow.add_node("jira_sync", sync_jira_ticket)
+    workflow.add_node("fallback", execute_fallback)
 
     workflow.set_entry_point("investigate")
+    
     workflow.add_edge("investigate", "synthesize")
     workflow.add_edge("synthesize", "human_approval")
 
     workflow.add_conditional_edges(
         "human_approval",
         check_approval,
-        {"execute": "remediate", "end": END},
+        {"execute": "remediate", "end": END, "fallback": "fallback"},
     )
-    workflow.add_edge("remediate", END)
+    
+    workflow.add_conditional_edges(
+        "remediate", 
+        route_post_remediation, 
+        {"jira_sync": "jira_sync", "fallback": "fallback"}
+    )
+    
+    workflow.add_conditional_edges(
+        "jira_sync", 
+        route_post_jira, 
+        {"end": END, "fallback": "fallback"}
+    )
+    
+    workflow.add_edge("fallback", END)
 
     if checkpointer:
         return workflow.compile(checkpointer=checkpointer)

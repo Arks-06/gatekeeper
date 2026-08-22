@@ -15,3 +15,5 @@ class GatekeeperState(TypedDict):
     proposed_action: str | None
     human_approved: bool | None
     execution_log: list[str] | None
+    jira_sync_status: str | None
+    error_message: str | None

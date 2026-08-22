@@ -24,6 +24,7 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from models import Ticket
 from schemas import JiraWebhookPayload
 from tasks import resume_workflow
+from metrics import TICKETS_INGESTED_TOTAL
 # isort: on
 
 logger = logging.getLogger()
@@ -38,6 +39,14 @@ CHECKPOINTER_URI = DATABASE_URL.replace("postgresql+asyncpg", "postgresql")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+
+    from psycopg_pool import AsyncConnectionPool
+    psycopg_url = DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
+    
+    async with AsyncConnectionPool(conninfo=psycopg_url, kwargs={"autocommit": True}) as pool:
+        checkpointer = AsyncPostgresSaver(pool)
+        await checkpointer.setup()
+
     yield
 
 app = FastAPI(title="Gatekeeper Backend", lifespan=lifespan)
@@ -57,6 +66,8 @@ async def ingest_jira_webhook(
         logger.info(f"Received webhook for ticket: {payload.ticket_id}")
         ticket = await create_ticket(session, payload)
         
+        TICKETS_INGESTED_TOTAL.inc()
+        
         async with AsyncPostgresSaver.from_conn_string(CHECKPOINTER_URI) as checkpointer:
             graph = build_graph(checkpointer)
             config = {"configurable": {"thread_id": ticket.thread_id}}
@@ -69,6 +80,7 @@ async def ingest_jira_webhook(
     except Exception as error:  # noqa: BLE001
         logger.error(f"Error processing webhook: {error!s}")
         raise HTTPException(status_code=500, detail="Internal server error during ingestion")
+
 
 @app.get("/api/v1/webhooks/jira", response_model=list[Ticket])
 async def get_queued_alerts(
@@ -110,3 +122,14 @@ async def get_graph_state(thread_id: str):
     except Exception as e:   # noqa: BLE001
         logger.error(f"Error retrieving state for {thread_id}: {e}")
         raise HTTPException(status_code=500, detail="Error retrieving state")
+
+
+# mock jira endpoint
+@app.post("/api/issue/{ticket_id}/resolve", status_code=200)
+async def mock_jira_resolve(ticket_id: str, payload: dict):
+    """
+    "Mock external Jira webhook destination."
+    "Simulates a successful ticket resolution to satisfy the outbound sync node."
+    """
+    logger.info(f"Mock Jira Sync: Ticket {ticket_id} marked as Resolved.")
+    return {"status": "success", "ticket": ticket_id, "recorded_payload": payload}
