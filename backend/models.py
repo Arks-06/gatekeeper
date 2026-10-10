@@ -20,6 +20,7 @@ class Ticket(SQLModel, table=True):
         unique=True, index=True, description="LangGraph checkpoint thread UUID"
     )
     user_email: str = Field(index=True)
+    reporter_email: str | None = Field(default=None, description="Email of the reporting user")
     alert_type: str = Field(index=True)
     status: str = Field(default="pending", description="Current workflow status")
     created_at: datetime = Field(

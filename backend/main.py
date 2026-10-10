@@ -72,7 +72,7 @@ async def ingest_jira_webhook(
             graph = build_graph(checkpointer)
             config = {"configurable": {"thread_id": ticket.thread_id}}
             await graph.ainvoke(
-                {"ticket_id": ticket.ticket_id, "user_email": ticket.user_email, "alert_type": ticket.alert_type},
+                {"ticket_id": ticket.ticket_id, "user_email": ticket.user_email, "reporter_email": payload.reporter_email, "alert_type": ticket.alert_type},
                 config
             )
 

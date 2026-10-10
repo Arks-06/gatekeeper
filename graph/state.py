@@ -8,6 +8,7 @@ from typing import Any, TypedDict
 class GatekeeperState(TypedDict):
     ticket_id: str
     user_email: str
+    reporter_email: str | None
     alert_type: str
     investigative_evidence: dict[str, Any] | None
     summary: str | None

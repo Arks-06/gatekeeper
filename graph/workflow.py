@@ -21,15 +21,31 @@ from .llm_schemas import RemediationPlan
 from .state import GatekeeperState
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from crud import create_audit_log, update_ticket_status
+from database import async_session_maker
 from metrics import TICKETS_AUTO_RESOLVED_TOTAL
 
 MCP_URL = os.getenv("MCP_INTERNAL_URL", "http://mcpserver:9000/sse")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 
+async def log_to_db(ticket_id: str, action: str):
+    """Helper to write audit logs from inside graph nodes."""
+    if not ticket_id:
+        return
+    async with async_session_maker() as session:
+        await create_audit_log(session, ticket_id, action)
+
+async def set_ticket_status(ticket_id: str, status: str):
+    """Helper to write ticket status updates from inside graph nodes."""
+    if not ticket_id:
+        return
+    async with async_session_maker() as session:
+        await update_ticket_status(session, ticket_id, status)
 
 async def investigate_alert(state: GatekeeperState) -> GatekeeperState:
     evidence = {}
     target_email = state.get("user_email")
+    alert_type = state.get("alert_type")
 
     if not target_email:
         state["investigative_evidence"] = evidence
@@ -47,12 +63,47 @@ async def investigate_alert(state: GatekeeperState) -> GatekeeperState:
                 if ad_response.content:
                     evidence["active_directory"] = json.loads(ad_response.content[0].text)
 
-                vpn_response = await session.call_tool(
-                    "query_vpn_logs", 
-                    arguments={"target_email": target_email}
-                )
-                if vpn_response.content:
-                    evidence["vpn_logs"] = [json.loads(vpn_response.content[0].text)]
+                if alert_type == "impossible_travel":
+                    vpn_response = await session.call_tool(
+                        "query_vpn_logs", 
+                        arguments={"target_email": target_email}
+                    )
+                    if vpn_response.content:
+                        evidence["vpn_logs"] = [json.loads(vpn_response.content[0].text)]
+                        
+                elif alert_type == "phishing_report":
+                    email_response = await session.call_tool(
+                        "query_email_headers", 
+                        arguments={"target_email": target_email}
+                    )
+                    if email_response.content:
+                        evidence["email_headers"] = json.loads(email_response.content[0].text)
+                        
+                elif alert_type == "malware_detected":
+                    scan_response = await session.call_tool(
+                        "query_endpoint_scan_results", 
+                        arguments={"target_email": target_email}
+                    )
+                    if scan_response.content:
+                        evidence["endpoint_scan"] = json.loads(scan_response.content[0].text)
+
+                elif alert_type == "suspicious_behavior":
+                    activity_response = await session.call_tool(
+                        "query_user_activity_logs", 
+                        arguments={"target_email": target_email, "timeframe": "24h"}
+                    )
+                    if activity_response.content:
+                        evidence["activity_logs"] = json.loads(activity_response.content[0].text)
+                        
+                elif alert_type == "mass_download":
+                    dlp_response = await session.call_tool(
+                        "query_user_activity_logs", 
+                        arguments={"target_email": target_email, "event_type": "file_download", "volume_threshold": "high"}
+                    )
+                    if dlp_response.content:
+                        evidence["dlp_alerts"] = json.loads(dlp_response.content[0].text)
+
+                        
                     
     except Exception as error:  # noqa: BLE001
         evidence["error"] = str(error)
@@ -101,13 +152,27 @@ async def synthesize_and_propose(state: GatekeeperState) -> GatekeeperState:
         state["summary"] = response.summary
         state["risk_score"] = response.risk_score
         state["proposed_action"] = response.proposed_action
+        await log_to_db(state.get("ticket_id"), f"AI Proposed Remediation: {response.proposed_action} (Risk Score: {response.risk_score})")
     except Exception as error:  # noqa: BLE001
         state["error_message"] = f"Synthesis Error: {error!s}"
     
     return state
 
+def route_post_synthesis(state: GatekeeperState) -> str:
+    """Evaluates AI risk score to determine if human approval is required."""
+    if state.get("error_message"):
+        return "fallback"
+    
+    raw_score = state.get("risk_score") # Default to 100 (highest risk) if missing
+    risk_score = raw_score if raw_score is not None else 100
+    
+    if risk_score >= 70:
+        return "human_approval"
+    
+    # Low risk allows autonomous execution bypass
+    return "remediate"
 
-def await_human_approval(state: GatekeeperState) -> GatekeeperState:
+async def await_human_approval(state: GatekeeperState) -> GatekeeperState:
     if state.get("error_message"):
         return state
 
@@ -115,9 +180,14 @@ def await_human_approval(state: GatekeeperState) -> GatekeeperState:
     
     if isinstance(human_decision, dict) and human_decision.get("action") == "approve":
         state["human_approved"] = True
+        await set_ticket_status(state.get("ticket_id"), "human_approved")
     else:
         state["human_approved"] = False
-        
+        await set_ticket_status(state.get("ticket_id"), "human_rejected")
+
+    decision_str = "APPROVED" if state["human_approved"] else "REJECTED"
+    await log_to_db(state.get("ticket_id"), f"Human analyst {decision_str} the execution.")
+
     return state
 
 
@@ -125,10 +195,12 @@ async def execute_remediation(state: GatekeeperState) -> GatekeeperState:
     alert_type = state.get("alert_type")
     proposed_action = state.get("proposed_action")
     target_email = state.get("user_email")
+    reporter_email = state.get("reporter_email", "system_monitor")
     execution_log = state.get("execution_log", []) or []
+    ticket_id = state.get("ticket_id")
 
     try:
-        validate_action(alert_type, proposed_action)
+        validate_action(alert_type, proposed_action, target_email, reporter_email)
         
         async with sse_client(MCP_URL) as streams:  # noqa: SIM117
             async with ClientSession(streams[0], streams[1]) as session:
@@ -139,10 +211,18 @@ async def execute_remediation(state: GatekeeperState) -> GatekeeperState:
                 )
                 if response.content:
                     execution_log.append(f"SUCCESS: {response.content[0].text}")
+                await log_to_db(ticket_id, f"Executed successfully: {proposed_action}")
+
+                if not state.get("human_approved"):
+                    await set_ticket_status(ticket_id, "auto_resolved")
+                else:
+                    await set_ticket_status(ticket_id, "resolved")
                     
     except Exception as error:  # noqa: BLE001
         execution_log.append(f"FAILURE: {error!s}")
         state["error_message"] = f"Execution Error: {error!s}"
+        await log_to_db(ticket_id, f"Execution failed: {error!s}")
+        await set_ticket_status(ticket_id, "escalated")
 
     state["execution_log"] = execution_log
     return state
@@ -182,7 +262,16 @@ def build_graph(checkpointer: BaseCheckpointSaver | None = None):
     workflow.set_entry_point("investigate")
     
     workflow.add_edge("investigate", "synthesize")
-    workflow.add_edge("synthesize", "human_approval")
+    # workflow.add_edge("synthesize", "human_approval")
+    workflow.add_conditional_edges(
+        "synthesize",
+        route_post_synthesis,
+        {
+            "human_approval": "human_approval",
+            "remediate": "remediate",
+            "fallback": "fallback"
+        }
+    )
 
     workflow.add_conditional_edges(
         "human_approval",

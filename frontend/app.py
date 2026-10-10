@@ -11,7 +11,36 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 st.set_page_config(page_title="Gatekeeper", layout="wide")
-st.title("Gatekeeper Engine")
+
+st.markdown(
+    """
+    <style>
+    /* Target the core Streamlit view container */
+    [data-testid="stAppViewContainer"] {
+        background: linear-gradient(135deg, #0f2029 0%, #203a43 50%, #2c5364 100%) !important;
+    }
+    
+    /* Make the top header completely transparent so it doesn't cut off the gradient */
+    [data-testid="stHeader"] {
+        background: transparent !important;
+    }
+    
+    /* Darken expanders and add a subtle border so text stays readable over the gradient */
+    [data-testid="stExpander"] {
+        background-color: rgba(0, 0, 0, 0.4) !important;
+        border-radius: 8px !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    }
+    
+    /* Ensure markdown text inside expanders doesn't wash out */
+    [data-testid="stExpanderDetails"] {
+        background-color: rgba(0, 0, 0, 0.2) !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+st.title("Gatekeeper Engine - v3")
 st.write("Frontend System Status: Online")
 
 backend_url = os.getenv("BACKEND_URL", "http://backend:8000")
@@ -19,8 +48,6 @@ mcp_url = os.getenv("MCP_URL", "http://mcpserver:9000/sse")
 
 tab_ledger, tab_executive = st.tabs([
     "Alert Ledger", 
-    # "Developer MCP Inspector", 
-    # "Agent State Diagram", 
     "Executive Analytics"
 ])
 
@@ -48,78 +75,102 @@ with tab_ledger:
             else:
                 for alert in alerts:
                     thread_id = alert.get("thread_id")
-                    with st.expander(f"Ticket: {alert.get('ticket_id')} - {alert.get('alert_type')} ({alert.get('status')})"):
-                        st.write(f"**Thread ID:** `{thread_id}`")
-                        st.write(f"**User Email:** {alert.get('user_email')}")
+                    db_status = alert.get('status', 'pending')
+                    
+                    # Map database status to colored UI labels for the minimized block
+                    status_ui_map = {
+                        "pending": "⏳ PENDING REVIEW",
+                        "auto_resolved": "AUTO EXECUTED",
+                        "human_approved": "APPROVED",
+                        "human_rejected": "REJECTED",
+                        "escalated": "🚨 ESCALATED (GUARDRAIL)"
+                    }
+                    display_status = status_ui_map.get(db_status, db_status.upper())
+                    
+                    state_data = {}
+                    error_msg = None
+                    
+                    try:
+                        state_response = requests.get(f"{backend_url}/api/v1/graph/state/{thread_id}", timeout=5)
+                        if state_response.status_code == 200:
+                            raw_response = state_response.json()
+                            state_data = raw_response.get("values", raw_response.get("state", raw_response))
+                            if isinstance(state_data, str):
+                                state_data = json.loads(state_data)
+                            if isinstance(state_data, dict):
+                                error_msg = state_data.get('error_message')
+                    except requests.exceptions.RequestException:
+                        pass
+
+                    # Expanded block header with wider information density
+                    expander_title = f"{alert.get('ticket_id')} | {alert.get('alert_type').replace('_', ' ').title()} | Status: {display_status}"
+                    
+                    with st.expander(expander_title):
+                        # Top Metrics Row
+                        col1, col2, col3, col4 = st.columns(4)
                         
-                        try:
-                            state_response = requests.get(f"{backend_url}/api/v1/graph/state/{thread_id}", timeout=5)
-                            if state_response.status_code == 200:
-                                raw_response = state_response.json()
+                        target_email = alert.get('user_email', 'Unknown')
+                        reporter_email = state_data.get('reporter_email', 'System')
+                        risk_score = state_data.get('risk_score', 'N/A')
+                        
+                        col1.markdown(f"**Target:** `{target_email}`")
+                        col2.markdown(f"**Reporter:** `{reporter_email}`")
+                        col3.markdown(f"**Thread ID:** `{thread_id[-12:]}`")
+                        
+                        # Apply color-coding to the Risk Score metric
+                        if isinstance(risk_score, int):
+                            delta_color = "inverse" if risk_score >= 70 else "normal"
+                            col4.metric(label="AI Risk Score", value=risk_score, delta="High Risk" if risk_score >= 70 else "Low Risk", delta_color=delta_color)
+                        else:
+                            col4.metric(label="AI Risk Score", value="Calculating...")
+
+                        if not state_data:
+                            st.warning("Backend timeout or error while retrieving state.")
+                        else:
+                            if error_msg:
+                                st.error(f"System Guardrail Fault: {error_msg}")
+                            
+                            jira_status = state_data.get('jira_sync_status')
+                            if jira_status == "Success":
+                                st.success("Jira Synchronization: Completed - Ticket Resolved")
+                            elif jira_status:
+                                st.warning(f"Jira Synchronization: {jira_status}")
+
+                            st.markdown("### AI Analysis Summary")
+                            st.info(f"**Investigation Reasoning:** {state_data.get('summary', 'Pending...')}")
+                            st.markdown(f"**Proposed Action:** `{state_data.get('proposed_action', 'Pending...')}`")
+                            
+                            if state_data.get('summary') and not error_msg:
+                                st.divider()
                                 
-                                state_data = raw_response.get("values", raw_response.get("state", raw_response))
-                                if isinstance(state_data, str):
-                                    state_data = json.loads(state_data)
-
-                                if isinstance(state_data, dict):
-                                    error_msg = state_data.get('error_message')
-                                    if error_msg:
-                                        st.error(f"Critical System Fault: {error_msg}")
-                                        # st.toast("Workflow routed to fallback node.", icon="🚨")
-                                        if st.button("Emergency Manual Override", key=f"override_{thread_id}"):
-                                            st.info("System parked. Awaiting manual SOC intervention.")
-
-                                    jira_status = state_data.get('jira_sync_status')
-                                    if jira_status == "Success":
-                                        st.success("Jira Synchronization: Completed - Status Resolved")
-                                    elif jira_status:
-                                        st.warning(f"Jira Synchronization: {jira_status}")
-
-                                    # Maintain previous evidence rendering logic here
-                                    evidence = state_data.get("investigative_evidence", {})
-                                    st.markdown("### AI Analysis Summary")
-                                    st.markdown(f"> **Investigation Summary:** {state_data.get('summary', 'Pending...')}")
-                                    st.markdown(f"> **Proposed Action:** `{state_data.get('proposed_action', 'Pending...')}`")
+                                # Strict Display Logic based on actual Database Status
+                                if db_status == "pending":
+                                    st.warning("⚠️ High Risk Score (≥70). Human authorization required before execution.")
+                                    btn_col1, btn_col2 = st.columns(2)
                                     
-                                    if state_data.get('summary') and not error_msg:
-                                        human_approved = state_data.get('human_approved')
-                                        st.divider()
+                                    with btn_col1:
+                                        if st.button("Approve & Execute", type="primary", key=f"approve_{thread_id}"):
+                                            with st.spinner("Transmitting approval to orchestrator..."):
+                                                requests.post(f"{backend_url}/api/v1/tickets/{thread_id}/approve", timeout=5)
+                                            st.rerun()
+                                    with btn_col2:
+                                        if st.button("Reject Ticket", key=f"reject_{thread_id}"):
+                                            with st.spinner("Haulting workflow and recording rejection..."):
+                                                requests.post(f"{backend_url}/api/v1/tickets/{thread_id}/reject", timeout=5)
+                                            st.rerun()
+                                            
+                                elif db_status in ["auto_resolved", "human_approved"]:
+                                    st.success(f"Action Executed ({display_status})")
+                                    st.markdown("#### Live Execution Log")
+                                    for log_entry in state_data.get('execution_log', []):
+                                        st.code(log_entry)
                                         
-                                        if human_approved is None:
-                                            st.markdown("#### Human Authorization Required")
-                                            btn_col1, btn_col2 = st.columns(2)
-                                            with btn_col1:
-                                                if st.button("Approve & Execute", type="primary", key=f"approve_{thread_id}"):
-                                                    requests.post(f"{backend_url}/api/v1/tickets/{thread_id}/approve", timeout=5)
-                                                    st.success("Approval staged. Executing...")
-                                            with btn_col2:
-                                                if st.button("Reject Ticket", key=f"reject_{thread_id}"):
-                                                    requests.post(f"{backend_url}/api/v1/tickets/{thread_id}/reject", timeout=5)
-                                                    st.error("Remediation blocked. Halting workflow.")
-                                        elif human_approved is True:
-                                            st.markdown("### Live Execution Log")
-                                            for log_entry in state_data.get('execution_log', []):
-                                                st.code(log_entry)
-                        except requests.exceptions.RequestException:
-                            st.warning("Backend timeout while retrieving state.")
+                                elif db_status == "human_rejected":
+                                    st.error("Workflow terminated. Action rejected by SOC analyst.")
         else:
             st.error(f"Failed to fetch alerts. Status code: {feed_response.status_code}")
     except requests.exceptions.RequestException:
         st.error("Backend connection lost. Retrying...")
-
-# with tab_inspector:
-#     st.info("Developer MCP tool execution retained as configured.")
-
-# with tab_diagram:
-#     st.subheader("LangGraph Execution Blueprint")
-#     if st.button("Fetch Architecture Schema"):
-#         try:
-#             schema_response = requests.get(f"{backend_url}/api/v1/graph/schema", timeout=5)
-#             if schema_response.status_code == 200:
-#                 mermaid_syntax = schema_response.text.replace("<p>", "").replace("</p>", "").replace("&nbsp;", " ")
-#                 st.markdown(f"```mermaid\n{mermaid_syntax}\n```")
-#         except Exception:
-#             st.error("Schema endpoint unreachable")
 
 with tab_executive:
     st.subheader("SOC Operations Executive Metrics")
